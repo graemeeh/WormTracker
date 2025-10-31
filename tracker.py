@@ -2,13 +2,64 @@ import numpy as np
 import cv2
 import pandas as pd
 import scipy
+import os
 
 def batch_track(folder):
-    pass
+    vids = []
+    for root, dirs, files in os.walk(folder):
+        for f in files:
+            if (f.endswith('.avi')):
+                vids.append(os.path.join(root, f))
+    for i in vids:
+        VIDEO = cv2.VideoCapture(i)
+        mog = cv2.createBackgroundSubtractorMOG2(detectShadows=False)
+        cv2.namedWindow('Video', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Video', 1024, 768)
 
-class Track(object):
-    def __init__(self, backgroundsubtractor, kernel_size, stdev, ):
-        pass
+        ret = True
+        time = 0
+        con_d = []
+        paused = False
+
+        while ret:
+            ret, frame = VIDEO.read()
+            if frame is None:
+                break
+            frame = cv2.ximgproc.anisotropicDiffusion(frame, alpha=0.2, K=100, niters=3)
+            edges = log_abs(bg_subtract(img=frame, bgsubtractor=mog), sigma=0.3)
+            contour_d, highlighted_image = worms_track(edges, min=150, max=1500, time=time, ratio=0.8)
+            f = cv2.addWeighted(frame, 0.5,
+                                cv2.merge([highlighted_image, np.zeros_like(highlighted_image), highlighted_image]),
+                                0.9, 0)
+            resized_frame = cv2.resize(f, (1024, 768))
+            cv2.imshow('Video', resized_frame)
+            time += 1
+            con_d.append(contour_d)
+            key = cv2.waitKey(100) & 0xFF
+            if key == ord('q'):
+                break
+            elif key == ord(' '):
+                paused = not paused
+            while paused:
+                key = cv2.waitKey(100) & 0xFF
+                if key == ord(' '):
+                    paused = False
+                    break
+
+        d, b = feats_detect(VIDEO)
+        while True:
+            cv2.imshow('Video', b)
+            if cv2.waitKey(1000) & 0xFF == ord('q'):
+                break
+
+        VIDEO.release()
+        cv2.destroyAllWindows()
+
+        df = pd.concat(con_d)
+        join_tracks(df, 500)
+        df.to_csv(i + '_worms.csv')
+        d.to_csv(i + '_details.csv')
+        print("all done!")
 
 def bg_subtract(img, bgsubtractor, ksize: int = 5):
     """"
@@ -21,8 +72,7 @@ def bg_subtract(img, bgsubtractor, ksize: int = 5):
     """
     return cv2.morphologyEx(bgsubtractor.apply(img), cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize)))
 
-
-def log_abs(img, sigma: float = 0.2):
+def log_abs(img, sigma: float = 0.3):
     """
     see https://www.youtube.com/watch?v=uNP6ZwQ3r6A for how this works
     :param img:
@@ -67,10 +117,6 @@ def worms_track(edges, min: int, max: int, ratio: float, time: int):
                 'height': slice[0].stop - slice[0].start,
                 'width': slice[1].stop - slice[1].start})
     return pd.DataFrame(contour_data), highlighted
-
-class Features(object):
-    def __init__(self):
-        pass
 
 def median_frame(vid):
     # This is from https://github.com/samwestby/OpenCV-Python-Tutorial/blob/main/8_background_est.py
@@ -133,54 +179,5 @@ def join_tracks(f: pd.DataFrame, maxdist: int):
         # maybe also optimize area difference between subsequent frames? cost matrix from https://github.com/Tierpsy/tierpsy-tracker/blob/development/tierpsy/analysis/traj_join/joinBlobsTrajectories.py
     return f
 
+batch_track('/Users/graeme')
 
-
-FILENAME = "N2.avi"
-VIDEO = cv2.VideoCapture(FILENAME)
-mog = cv2.createBackgroundSubtractorMOG2(detectShadows=False)
-cv2.namedWindow('Video', cv2.WINDOW_NORMAL)
-cv2.resizeWindow('Video', 1024, 768)
-
-ret = True
-time = 0
-con_d = []
-paused = False
-
-while ret:
-    ret, frame = VIDEO.read()
-    if frame is None:
-        break
-    frame = cv2.ximgproc.anisotropicDiffusion(frame, alpha = 0.2, K = 100, niters= 3)
-    edges = log_abs(bg_subtract(img = frame, bgsubtractor=mog), sigma = 0.3)
-    contour_d, highlighted_image = worms_track(edges, min=150, max=1500, time = time, ratio = 0.8)
-    f = cv2.addWeighted(frame, 0.5, cv2.merge([highlighted_image, np.zeros_like(highlighted_image), highlighted_image]), 0.9, 0)
-    resized_frame = cv2.resize(f, (1024, 768))
-    cv2.imshow('Video', resized_frame)
-    time += 1
-    con_d.append(contour_d)
-    key = cv2.waitKey(100) & 0xFF
-    if key == ord('q'):
-        break
-    elif key == ord(' '):
-        paused = not paused
-    while paused:
-        key = cv2.waitKey(100) & 0xFF
-        if key == ord(' '):
-            paused = False
-            break
-
-d, b = feats_detect(VIDEO)
-while True:
-    cv2.imshow('Video', b)
-    if cv2.waitKey(0) & 0xFF == ord('q'):
-        break
-
-VIDEO.release()
-cv2.destroyAllWindows()
-
-
-df = pd.concat(con_d)
-join_tracks(df, 500)
-df.to_csv(FILENAME+'_worms.csv')
-d.to_csv(FILENAME+'_details.csv')
-print("all done!")
